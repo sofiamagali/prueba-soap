@@ -1,7 +1,7 @@
 meta {
-  name: Create VAT Validation - valid
+  name: Create VAT Validation - invalid params
   type: http
-  seq: 1
+  seq: 5
 }
 
 post {
@@ -16,7 +16,7 @@ headers {
 
 body:json {
   {
-    "country_code": "ES",
-    "vat_number": "B99286320"
+    "country_code": "ESP",
+    "vat_number": ""
   }
 }
