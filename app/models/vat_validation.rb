@@ -1,0 +1,2 @@
+class VatValidation < ApplicationRecord
+end
