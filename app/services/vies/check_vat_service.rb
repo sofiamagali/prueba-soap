@@ -3,9 +3,23 @@ require "net/http"
 require "nokogiri"
 
 module Vies
+  class Error < StandardError; end
+  class InvalidInputError < Error; end
+  class ServiceUnavailableError < Error; end
+  class MemberStateUnavailableError < Error; end
+  class TimeoutError < Error; end
+  class ServerBusyError < Error; end
+
   class CheckVatService
     ENDPOINT = URI("https://ec.europa.eu/taxation_customs/vies/services/checkVatService").freeze
     TIMEOUT_SECONDS = 10
+    FAULT_ERRORS = {
+      "INVALID_INPUT" => InvalidInputError,
+      "SERVICE_UNAVAILABLE" => ServiceUnavailableError,
+      "MS_UNAVAILABLE" => MemberStateUnavailableError,
+      "TIMEOUT" => TimeoutError,
+      "SERVER_BUSY" => ServerBusyError
+    }.freeze
 
     def self.call(country_code:, vat_number:)
       response = Net::HTTP.start(ENDPOINT.host, ENDPOINT.port, use_ssl: true) do |http|
@@ -49,9 +63,7 @@ module Vies
 
     def self.parse_response(body)
       document = Nokogiri::XML(body) { |config| config.strict.noblanks }
-      fault = text_at(document, "Fault")
-
-      raise "VIES SOAP fault: #{fault.strip}" if fault
+      raise_fault(document) if fault?(document)
 
       {
         valid: text_at(document, "valid") == "true",
@@ -61,6 +73,20 @@ module Vies
       }
     end
     private_class_method :parse_response
+
+    def self.fault?(document)
+      !document.at_xpath("//*[local-name()='Fault']").nil?
+    end
+    private_class_method :fault?
+
+    def self.raise_fault(document)
+      faultstring = normalize_text(text_at(document, "faultstring"))
+      error_class = FAULT_ERRORS.fetch(faultstring, Error)
+      message = faultstring || "Unknown VIES SOAP fault"
+
+      raise error_class, message
+    end
+    private_class_method :raise_fault
 
     def self.text_at(document, name)
       document.at_xpath("//*[local-name()='#{name}']")&.text
