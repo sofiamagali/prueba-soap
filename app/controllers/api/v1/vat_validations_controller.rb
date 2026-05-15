@@ -1,55 +1,35 @@
-require_dependency "vies/check_vat_service"
-
 module Api
   module V1
     class VatValidationsController < ApplicationController
       def create
-        vat_validation = VatValidation.new(vat_validation_params)
+        result = VatValidations::CreateService.new(params).call
 
-        unless vat_validation.valid?
-          return render json: { errors: vat_validation.errors.full_messages }, status: :unprocessable_entity
-        end
+        return render json: { errors: result.errors }, status: result.status unless result.success?
 
-        vies_response = Vies::CheckVatService.call(
-          country_code: vat_validation.country_code,
-          vat_number: vat_validation.vat_number
-        )
-
-        vat_validation.assign_attributes(vies_response)
-        vat_validation.save!
-
-        render json: vat_validation_json(vat_validation), status: :created
-      rescue Vies::InvalidInputError => e
-        render json: { errors: [e.message] }, status: :unprocessable_entity
-      rescue Vies::ServiceUnavailableError, Vies::MemberStateUnavailableError,
-             Vies::TimeoutError, Vies::ServerBusyError => e
-        render json: { errors: [e.message] }, status: :service_unavailable
+        render json: vat_validation_json(result.vat_validation), status: :created
       end
 
       def show
         vat_validation = VatValidation.find_by(id: params[:id])
 
-        unless vat_validation
-          return render json: { error: "Vat validation not found" }, status: :not_found
-        end
+        return render json: { error: "Vat validation not found" }, status: :not_found unless vat_validation
 
         render json: vat_validation_json(vat_validation)
       end
 
       def index
+        result = VatValidations::ListQuery.new(params).call
+
+        render json: {
+          items: result[:items].map { |vat_validation| vat_validation_json(vat_validation) },
+          pagination: result[:pagination]
+        }
       end
 
       def stats
       end
 
       private
-
-      def vat_validation_params
-        {
-          country_code: params[:country_code].to_s.strip.upcase,
-          vat_number: params[:vat_number].to_s.strip
-        }
-      end
 
       def vat_validation_json(vat_validation)
         {
