@@ -1,6 +1,6 @@
 module VatValidations
   class CreateService
-    Result = Struct.new(:vat_validation, :errors, :status, keyword_init: true) do
+    Result = Struct.new(:vat_validation, :errors, :status, :cached, keyword_init: true) do
       def success?
         errors.blank?
       end
@@ -15,10 +15,13 @@ module VatValidations
 
       return Result.new(errors: vat_validation.errors.full_messages, status: :unprocessable_entity) unless vat_validation.valid?
 
+      cached_vat_validation = cached_vat_validation_for(vat_validation)
+      return Result.new(vat_validation: cached_vat_validation, cached: true) if cached_vat_validation
+
       vat_validation.assign_attributes(vies_response_for(vat_validation))
       vat_validation.save!
 
-      Result.new(vat_validation: vat_validation)
+      Result.new(vat_validation: vat_validation, cached: false)
     rescue Vies::InvalidInputError => e
       Result.new(errors: [e.message], status: :unprocessable_entity)
     rescue Vies::ServiceUnavailableError, Vies::MemberStateUnavailableError,
@@ -42,6 +45,14 @@ module VatValidations
         country_code: vat_validation.country_code,
         vat_number: vat_validation.vat_number
       )
+    end
+
+    def cached_vat_validation_for(vat_validation)
+      VatValidation
+        .where(country_code: vat_validation.country_code, vat_number: vat_validation.vat_number)
+        .where("queried_at >= :since OR created_at >= :since", since: 24.hours.ago)
+        .order(queried_at: :desc, created_at: :desc)
+        .first
     end
   end
 end
