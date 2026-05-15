@@ -27,9 +27,34 @@ module Api
       end
 
       def stats
+        total_validations = VatValidation.count
+        valid_count = VatValidation.where(vies_valid: true).count
+        invalid_count = VatValidation.where(vies_valid: false).count
+
+        render json: {
+          total_validations: total_validations,
+          valid_percentage: percentage(valid_count, total_validations),
+          invalid_percentage: percentage(invalid_count, total_validations),
+          top_countries: top_countries
+        }
       end
 
       private
+
+      def percentage(count, total)
+        return 0 if total.zero?
+
+        ((count.to_f / total) * 100).round(2)
+      end
+
+      def top_countries
+        VatValidation
+          .group(:country_code)
+          .order(Arel.sql("COUNT(*) DESC"))
+          .limit(5)
+          .count
+          .map { |country_code, count| { country_code: country_code, count: count } }
+      end
 
       def vat_validation_json(vat_validation, cached: false)
         {
