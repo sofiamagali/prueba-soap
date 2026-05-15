@@ -27,6 +27,13 @@ module Api
       end
 
       def show
+        vat_validation = VatValidation.find_by(id: params[:id])
+
+        unless vat_validation
+          return render json: { error: "Vat validation not found" }, status: :not_found
+        end
+
+        render json: vat_validation_json(vat_validation)
       end
 
       def index
