@@ -27,6 +27,10 @@ module VatValidations
     rescue Vies::ServiceUnavailableError, Vies::MemberStateUnavailableError,
            Vies::TimeoutError, Vies::ServerBusyError => e
       Result.new(errors: [e.message], status: :service_unavailable)
+    rescue Vies::UnexpectedResponseError => e
+      Result.new(errors: [e.message], status: :bad_gateway)
+    rescue Vies::Error => e
+      Result.new(errors: [e.message], status: :service_unavailable)
     end
 
     private

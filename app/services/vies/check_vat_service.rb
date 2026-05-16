@@ -9,6 +9,7 @@ module Vies
   class MemberStateUnavailableError < Error; end
   class TimeoutError < Error; end
   class ServerBusyError < Error; end
+  class UnexpectedResponseError < Error; end
 
   class CheckVatService
     ENDPOINT = URI("https://ec.europa.eu/taxation_customs/vies/services/checkVatService").freeze
@@ -28,9 +29,15 @@ module Vies
         http.request(request(country_code:, vat_number:))
       end
 
-      raise "VIES request failed: HTTP #{response.code}" unless response.is_a?(Net::HTTPSuccess)
+      unless response.is_a?(Net::HTTPSuccess)
+        raise ServiceUnavailableError, "VIES request failed with HTTP #{response.code}"
+      end
 
       parse_response(response.body)
+    rescue Net::OpenTimeout, Net::ReadTimeout, Timeout::Error
+      raise TimeoutError, "VIES request timed out"
+    rescue SocketError, SystemCallError, IOError => e
+      raise ServiceUnavailableError, "VIES request failed: #{e.message}"
     end
 
     def self.request(country_code:, vat_number:)
@@ -64,13 +71,17 @@ module Vies
     def self.parse_response(body)
       document = Nokogiri::XML(body) { |config| config.strict.noblanks }
       raise_fault(document) if fault?(document)
+      valid = text_at(document, "valid")
+      raise UnexpectedResponseError, "Unexpected VIES response" if valid.nil?
 
       {
-        valid: text_at(document, "valid") == "true",
+        valid: valid == "true",
         company_name: normalize_text(text_at(document, "name")),
         company_address: normalize_text(text_at(document, "address")),
         queried_at: Time.respond_to?(:current) ? Time.current : Time.now
       }
+    rescue Nokogiri::XML::SyntaxError
+      raise UnexpectedResponseError, "Invalid XML response from VIES"
     end
     private_class_method :parse_response
 

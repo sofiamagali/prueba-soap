@@ -94,4 +94,18 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     assert_equal "ES", response.parsed_body["items"].first["country_code"]
     assert_equal true, response.parsed_body["items"].first["valid"]
   end
+
+  test "index returns validation error for invalid date_from" do
+    get api_v1_vat_validations_path, params: { date_from: "not-a-date" }
+
+    assert_response :unprocessable_entity
+    assert_equal ["date_from is invalid"], response.parsed_body["errors"]
+  end
+
+  test "index returns validation error for invalid date_to" do
+    get api_v1_vat_validations_path, params: { date_to: "not-a-date" }
+
+    assert_response :unprocessable_entity
+    assert_equal ["date_to is invalid"], response.parsed_body["errors"]
+  end
 end

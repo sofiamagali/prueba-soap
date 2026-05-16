@@ -1,5 +1,7 @@
 module VatValidations
   class ListQuery
+    class InvalidDateError < StandardError; end
+
     DEFAULT_PAGE = 1
     DEFAULT_PER_PAGE = 25
 
@@ -35,10 +37,18 @@ module VatValidations
         scope = VatValidation.order(created_at: :desc)
         scope = scope.where(country_code: params[:country_code].to_s.strip.upcase) if params[:country_code].present?
         scope = scope.where(vies_valid: boolean_param(params[:valid])) if params.key?(:valid)
-        scope = scope.where("queried_at >= ?", Time.zone.parse(params[:date_from]).beginning_of_day) if params[:date_from].present?
-        scope = scope.where("queried_at <= ?", Time.zone.parse(params[:date_to]).end_of_day) if params[:date_to].present?
+        scope = scope.where("queried_at >= ?", date_param(:date_from).beginning_of_day) if params[:date_from].present?
+        scope = scope.where("queried_at <= ?", date_param(:date_to).end_of_day) if params[:date_to].present?
         scope
       end
+    end
+
+    def date_param(name)
+      Time.zone.parse(params[name]).tap do |date|
+        raise InvalidDateError, "#{name} is invalid" unless date
+      end
+    rescue ArgumentError, TypeError
+      raise InvalidDateError, "#{name} is invalid"
     end
 
     def boolean_param(value)
