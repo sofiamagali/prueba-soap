@@ -7,6 +7,11 @@ module Vies
   class CheckVatService
     ENDPOINT = URI("https://ec.europa.eu/taxation_customs/vies/services/checkVatService").freeze
     TIMEOUT_SECONDS = 10
+    # Evita tratar como fallos transitorios los paises que VIES nunca va a aceptar.
+    # Esos casos deben responder 422 sin crear pending ni encolar Sidekiq.
+    SUPPORTED_COUNTRY_CODES = %w[
+      AT BE BG CY CZ DE DK EE EL ES FI FR HR HU IE IT LT LU LV MT NL PL PT RO SE SI SK XI
+    ].freeze
 
     def self.call(country_code:, vat_number:)
       # Net::HTTP alcanza para este caso y evita sumar una dependencia SOAP solo para un endpoint.

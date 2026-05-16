@@ -95,6 +95,19 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     assert_equal 0, VatValidationWorker.jobs.size
   end
 
+  test "create rejects unsupported VIES country without async processing" do
+    calls = 0
+    stub_vies_call(->(**) { calls += 1 }) do
+      post api_v1_vat_validations_path, params: { country_code: "XX", vat_number: "INVALID_INPUT" }
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.parsed_body["errors"], "Country code is not supported by VIES"
+    assert_equal 0, calls
+    assert_equal 0, VatValidation.count
+    assert_equal 0, VatValidationWorker.jobs.size
+  end
+
   test "create enqueues a pending validation when VIES is unavailable" do
     stub_vies_error(Vies::ServiceUnavailableError, "SERVICE_UNAVAILABLE") do
       post api_v1_vat_validations_path, params: { country_code: "ES", vat_number: "A12345678" }
