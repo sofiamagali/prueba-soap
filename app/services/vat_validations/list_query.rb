@@ -1,6 +1,7 @@
 module VatValidations
   class ListQuery
     class InvalidDateError < StandardError; end
+    class InvalidBooleanError < StandardError; end
 
     DEFAULT_PAGE = 1
     DEFAULT_PER_PAGE = 25
@@ -52,7 +53,14 @@ module VatValidations
     end
 
     def boolean_param(value)
-      ActiveModel::Type::Boolean.new.cast(value)
+      case value.to_s
+      when "true", "1"
+        true
+      when "false", "0"
+        false
+      else
+        raise InvalidBooleanError, "valid must be true, false, 1 or 0"
+      end
     end
 
     def positive_integer_param(value, default)
