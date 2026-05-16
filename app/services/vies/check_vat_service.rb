@@ -1,34 +1,22 @@
 require "cgi"
 require "net/http"
 require "nokogiri"
+require_relative "errors"
 
 module Vies
-  class Error < StandardError; end
-  class InvalidInputError < Error; end
-  class ServiceUnavailableError < Error; end
-  class MemberStateUnavailableError < Error; end
-  class TimeoutError < Error; end
-  class ServerBusyError < Error; end
-  class UnexpectedResponseError < Error; end
-
   class CheckVatService
     ENDPOINT = URI("https://ec.europa.eu/taxation_customs/vies/services/checkVatService").freeze
     TIMEOUT_SECONDS = 10
-    FAULT_ERRORS = {
-      "INVALID_INPUT" => InvalidInputError,
-      "SERVICE_UNAVAILABLE" => ServiceUnavailableError,
-      "MS_UNAVAILABLE" => MemberStateUnavailableError,
-      "TIMEOUT" => TimeoutError,
-      "SERVER_BUSY" => ServerBusyError
-    }.freeze
 
     def self.call(country_code:, vat_number:)
+      # Net::HTTP alcanza para este caso y evita sumar una dependencia SOAP solo para un endpoint.
       response = Net::HTTP.start(ENDPOINT.host, ENDPOINT.port, use_ssl: true) do |http|
         http.open_timeout = TIMEOUT_SECONDS
         http.read_timeout = TIMEOUT_SECONDS
         http.request(request(country_code:, vat_number:))
       end
 
+      # Algunos faults vienen con HTTP 500, pero igual conviene parsearlos para no perder el motivo real.
       if fault_body?(response.body)
         parse_response(response.body)
       elsif !response.is_a?(Net::HTTPSuccess)
@@ -71,6 +59,7 @@ module Vies
     private_class_method :soap_body
 
     def self.parse_response(body)
+      # NONET evita que Nokogiri intente resolver entidades externas al parsear XML no confiable.
       document = Nokogiri::XML(body) { |config| config.strict.noblanks.nonet }
       raise_fault(document) if fault?(document)
       valid = text_at(document, "valid")
@@ -99,7 +88,8 @@ module Vies
 
     def self.raise_fault(document)
       faultstring = normalize_text(text_at(document, "faultstring"))
-      error_class = FAULT_ERRORS.fetch(faultstring, Error)
+      # VIES manda faults tanto por input invalido como por caidas temporales; no todos se tratan igual.
+      error_class = Vies::Errors.error_for_fault(faultstring)
       message = faultstring || "Unknown VIES SOAP fault"
 
       raise error_class, message

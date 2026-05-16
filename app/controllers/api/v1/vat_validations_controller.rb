@@ -30,6 +30,7 @@ module Api
 
       def stats
         total_validations = VatValidation.count
+        # Los porcentajes salen solo de completed porque pending/failed todavia no tienen una respuesta final de VIES.
         completed_validations = VatValidation.where(status: "completed")
         completed_count = completed_validations.count
         valid_count = completed_validations.where(vies_valid: true).count

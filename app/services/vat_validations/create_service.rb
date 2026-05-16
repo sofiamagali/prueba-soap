@@ -54,6 +54,7 @@ module VatValidations
     end
 
     def vies_response_for(vat_validation)
+      # Si VIES tarda, prefiero sacar la consulta del request y dejarla para Sidekiq.
       Timeout.timeout(SYNC_TIMEOUT_SECONDS) do
         Vies::CheckVatService.call(
           country_code: vat_validation.country_code,
@@ -78,6 +79,7 @@ module VatValidations
     end
 
     def cached_vat_validation_for(vat_validation)
+      # Para esta prueba alcanza con cachear 24h y evitar devolver datos viejos indefinidamente.
       VatValidation
         .where(country_code: vat_validation.country_code, vat_number: vat_validation.vat_number)
         .where(status: "completed")

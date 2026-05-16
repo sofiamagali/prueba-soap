@@ -1,11 +1,13 @@
 class VatValidationWorker
   include Sidekiq::Job
 
+  # VIES ya puede fallar de forma transitoria; para la prueba guardo el fallo en vez de reintentar sin limite.
   sidekiq_options retry: false
 
   def perform(vat_validation_id)
     vat_validation = VatValidation.find_by(id: vat_validation_id)
     return unless vat_validation
+    # El job podria encolarse mas de una vez; solo proceso registros que siguen pending.
     return unless vat_validation.status == "pending"
 
     response = Vies::CheckVatService.call(

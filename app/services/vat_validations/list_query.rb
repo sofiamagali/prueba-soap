@@ -66,6 +66,7 @@ module VatValidations
 
     def positive_integer_param(value, default)
       integer = value.to_i
+      # Limito el page size para que el index no termine trayendo toda la tabla por accidente.
       integer.positive? ? [integer, MAX_PER_PAGE].min : default
     end
   end
