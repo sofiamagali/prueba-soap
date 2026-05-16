@@ -1,11 +1,11 @@
 meta {
   name: show VAT validation
   type: http
-  seq: 2
+  seq: 5
 }
 
 get {
-  url: http://localhost:3000/api/v1/vat_validations/1
+  url: {{base_url}}/api/v1/vat_validations/{{validation_id}}
   body: none
   auth: none
 }

@@ -1,7 +1,7 @@
 meta {
-  name: Create VAT Validation - valid
+  name: Create VAT Validation - VIES error async pending
   type: http
-  seq: 1
+  seq: 4
 }
 
 post {
@@ -16,7 +16,7 @@ headers {
 
 body:json {
   {
-    "country_code": "IE",
-    "vat_number": "6388047V"
+    "country_code": "XX",
+    "vat_number": "ASYNC_PENDING"
   }
 }
