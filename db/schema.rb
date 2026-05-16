@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2026_05_15_233000) do
+ActiveRecord::Schema[7.2].define(version: 2026_05_16_000100) do
   create_table "vat_validations", charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci", force: :cascade do |t|
     t.string "country_code", null: false
     t.string "vat_number", null: false
@@ -20,6 +20,7 @@ ActiveRecord::Schema[7.2].define(version: 2026_05_15_233000) do
     t.datetime "queried_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "status", default: "completed", null: false
     t.index ["country_code", "vat_number"], name: "index_vat_validations_on_country_code_and_vat_number"
   end
 end

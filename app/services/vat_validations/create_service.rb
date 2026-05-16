@@ -1,5 +1,10 @@
+require "timeout"
+require_relative "../vies/check_vat_service"
+
 module VatValidations
   class CreateService
+    SYNC_TIMEOUT_SECONDS = 3
+
     Result = Struct.new(:vat_validation, :errors, :status, :cached, keyword_init: true) do
       def success?
         errors.blank?
@@ -16,21 +21,25 @@ module VatValidations
       return Result.new(errors: vat_validation.errors.full_messages, status: :unprocessable_entity) unless vat_validation.valid?
 
       cached_vat_validation = cached_vat_validation_for(vat_validation)
-      return Result.new(vat_validation: cached_vat_validation, cached: true) if cached_vat_validation
+      if cached_vat_validation
+        return Result.new(vat_validation: cached_vat_validation, cached: true, status: :created)
+      end
 
-      vat_validation.assign_attributes(vies_response_for(vat_validation))
+      vat_validation.assign_attributes(vies_response_for(vat_validation).merge(status: "completed"))
       vat_validation.save!
 
-      Result.new(vat_validation: vat_validation, cached: false)
+      Result.new(vat_validation: vat_validation, cached: false, status: :created)
     rescue Vies::InvalidInputError => e
-      Result.new(errors: [e.message], status: :unprocessable_entity)
+      enqueue_pending_validation(vat_validation, e.message)
     rescue Vies::ServiceUnavailableError, Vies::MemberStateUnavailableError,
            Vies::TimeoutError, Vies::ServerBusyError => e
-      Result.new(errors: [e.message], status: :service_unavailable)
+      enqueue_pending_validation(vat_validation, e.message)
     rescue Vies::UnexpectedResponseError => e
-      Result.new(errors: [e.message], status: :bad_gateway)
+      enqueue_pending_validation(vat_validation, e.message)
     rescue Vies::Error => e
-      Result.new(errors: [e.message], status: :service_unavailable)
+      enqueue_pending_validation(vat_validation, e.message)
+    rescue Timeout::Error => e
+      enqueue_pending_validation(vat_validation, e.message)
     end
 
     private
@@ -45,15 +54,26 @@ module VatValidations
     end
 
     def vies_response_for(vat_validation)
-      Vies::CheckVatService.call(
-        country_code: vat_validation.country_code,
-        vat_number: vat_validation.vat_number
-      )
+      Timeout.timeout(SYNC_TIMEOUT_SECONDS) do
+        Vies::CheckVatService.call(
+          country_code: vat_validation.country_code,
+          vat_number: vat_validation.vat_number
+        )
+      end
+    end
+
+    def enqueue_pending_validation(vat_validation, _error_message)
+      vat_validation.status = "pending"
+      vat_validation.save!
+      VatValidationWorker.perform_async(vat_validation.id)
+
+      Result.new(vat_validation: vat_validation, cached: false, status: :accepted)
     end
 
     def cached_vat_validation_for(vat_validation)
       VatValidation
         .where(country_code: vat_validation.country_code, vat_number: vat_validation.vat_number)
+        .where(status: "completed")
         .where("queried_at >= :since OR created_at >= :since", since: 24.hours.ago)
         .order(queried_at: :desc, created_at: :desc)
         .first

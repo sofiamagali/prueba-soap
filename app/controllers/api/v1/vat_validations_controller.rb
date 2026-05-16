@@ -6,7 +6,7 @@ module Api
 
         return render json: { errors: result.errors }, status: result.status unless result.success?
 
-        render json: vat_validation_json(result.vat_validation, cached: result.cached), status: :created
+        render json: vat_validation_json(result.vat_validation, cached: result.cached), status: result.status
       end
 
       def show
@@ -63,6 +63,7 @@ module Api
           id: vat_validation.id,
           country_code: vat_validation.country_code,
           vat_number: vat_validation.vat_number,
+          status: vat_validation.status,
           valid: vat_validation.valid,
           company_name: vat_validation.company_name,
           company_address: vat_validation.company_address,

@@ -1,5 +1,7 @@
 require "test_helper"
 
+Vies::CheckVatService
+
 class VatValidationsTest < ActionDispatch::IntegrationTest
   test "create stores a valid vat validation" do
     vies_response = {
@@ -16,6 +18,7 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     assert_response :created
     assert_equal "ES", response.parsed_body["country_code"]
     assert_equal "A12345678", response.parsed_body["vat_number"]
+    assert_equal "completed", response.parsed_body["status"]
     assert_equal true, response.parsed_body["valid"]
     assert_equal "Example SL", response.parsed_body["company_name"]
     assert_equal false, response.parsed_body["cached"]
@@ -36,6 +39,7 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
       valid: true,
       company_name: "Cached SL",
       company_address: "Madrid",
+      status: "completed",
       queried_at: Time.current
     )
 
@@ -46,27 +50,71 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
 
     assert_response :created
     assert_equal true, response.parsed_body["cached"]
+    assert_equal "completed", response.parsed_body["status"]
     assert_equal "Cached SL", response.parsed_body["company_name"]
     assert_equal 0, calls
     assert_equal 1, VatValidation.where(country_code: "ES", vat_number: "A12345678").count
+    assert_equal 0, VatValidationWorker.jobs.size
   end
 
-  test "create returns VIES invalid input errors" do
+  test "create enqueues a pending validation when VIES fails" do
     stub_vies_error(Vies::InvalidInputError, "INVALID_INPUT") do
       post api_v1_vat_validations_path, params: { country_code: "ES", vat_number: "INVALID" }
     end
 
-    assert_response :unprocessable_entity
-    assert_equal ["INVALID_INPUT"], response.parsed_body["errors"]
+    assert_response :accepted
+    assert_equal "pending", response.parsed_body["status"]
+    assert_equal 1, VatValidationWorker.jobs.size
+
+    vat_validation = VatValidation.find(response.parsed_body["id"])
+    assert_equal "pending", vat_validation.status
   end
 
-  test "create returns service unavailable for VIES timeout" do
+  test "create enqueues a pending validation when VIES times out" do
     stub_vies_error(Vies::TimeoutError, "VIES request timed out") do
       post api_v1_vat_validations_path, params: { country_code: "ES", vat_number: "TIMEOUT" }
     end
 
-    assert_response :service_unavailable
-    assert_equal ["VIES request timed out"], response.parsed_body["errors"]
+    assert_response :accepted
+    assert_equal "pending", response.parsed_body["status"]
+    assert_equal 1, VatValidationWorker.jobs.size
+  end
+
+  test "worker completes a pending vat validation when VIES succeeds" do
+    vat_validation = VatValidation.create!(
+      country_code: "ES",
+      vat_number: "A12345678",
+      status: "pending"
+    )
+    vies_response = {
+      valid: true,
+      company_name: "Worker SL",
+      company_address: "Barcelona",
+      queried_at: Time.zone.local(2026, 5, 16)
+    }
+
+    stub_vies_call(vies_response) do
+      VatValidationWorker.new.perform(vat_validation.id)
+    end
+
+    vat_validation.reload
+    assert_equal "completed", vat_validation.status
+    assert_equal true, vat_validation.valid
+    assert_equal "Worker SL", vat_validation.company_name
+  end
+
+  test "worker marks a pending vat validation as failed when VIES fails" do
+    vat_validation = VatValidation.create!(
+      country_code: "ES",
+      vat_number: "A12345678",
+      status: "pending"
+    )
+
+    stub_vies_error(Vies::ServiceUnavailableError, "SERVICE_UNAVAILABLE") do
+      VatValidationWorker.new.perform(vat_validation.id)
+    end
+
+    assert_equal "failed", vat_validation.reload.status
   end
 
   test "show returns an existing vat validation" do
@@ -76,6 +124,7 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
       valid: true,
       company_name: "Example SL",
       company_address: "Madrid",
+      status: "completed",
       queried_at: Time.zone.local(2026, 5, 15)
     )
 
