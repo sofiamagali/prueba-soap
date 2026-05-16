@@ -29,7 +29,9 @@ module Vies
         http.request(request(country_code:, vat_number:))
       end
 
-      unless response.is_a?(Net::HTTPSuccess)
+      if fault_body?(response.body)
+        parse_response(response.body)
+      elsif !response.is_a?(Net::HTTPSuccess)
         raise ServiceUnavailableError, "VIES request failed with HTTP #{response.code}"
       end
 
@@ -84,6 +86,11 @@ module Vies
       raise UnexpectedResponseError, "Invalid XML response from VIES"
     end
     private_class_method :parse_response
+
+    def self.fault_body?(body)
+      body.to_s.include?("Fault")
+    end
+    private_class_method :fault_body?
 
     def self.fault?(document)
       !document.at_xpath("//*[local-name()='Fault']").nil?

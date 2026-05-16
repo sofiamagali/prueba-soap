@@ -45,8 +45,8 @@ curl -X POST http://localhost:3000/api/v1/vat_validations \
 Respuestas esperadas:
 
 - `201 Created`: VIES respondio antes de 3 segundos y se guarda `status: completed`.
-- `202 Accepted`: VIES fallo o supero 3 segundos, se guarda `status: pending` y se encola Sidekiq.
-- `422 Unprocessable Content`: parametros locales invalidos.
+- `202 Accepted`: VIES tuvo un error transitorio o supero 3 segundos, se guarda `status: pending` y se encola Sidekiq.
+- `422 Unprocessable Content`: parametros locales invalidos o VIES respondio `INVALID_INPUT`.
 
 Si existe una validacion `completed` para el mismo `country_code` + `vat_number` en las ultimas 24 horas, responde desde cache con `cached: true` y no llama a VIES.
 
@@ -97,13 +97,15 @@ Los porcentajes de validas/invalidas se calculan solo sobre validaciones `comple
 
 ## Async con Sidekiq
 
-Cuando VIES falla o tarda mas de 3 segundos:
+Cuando VIES tiene un error transitorio o tarda mas de 3 segundos:
 
 1. La API crea una validacion `pending`.
 2. Responde `202 Accepted`.
 3. Encola `VatValidationWorker`.
 4. Sidekiq vuelve a llamar a VIES.
 5. El registro pasa a `completed` si VIES responde bien o a `failed` si vuelve a fallar.
+
+El fault `INVALID_INPUT` de VIES se considera un error de validacion del request y responde `422`; no se persiste ni se encola.
 
 Ver logs:
 
@@ -131,7 +133,7 @@ La coleccion Bruno esta en:
 bruno/vat-validations
 ```
 
-Incluye requests para create, cache, errores, show, index, filtros, stats y caso async/pending por error VIES.
+Incluye requests para create, cache, errores, show, index, filtros, stats y `INVALID_INPUT` de VIES. Los casos async dependen de errores transitorios o timeouts reales de VIES.
 
 ## Notas tecnicas
 

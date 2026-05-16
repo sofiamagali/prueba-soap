@@ -84,17 +84,25 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     assert_equal 2, VatValidation.where(country_code: "ES", vat_number: "A12345678").count
   end
 
-  test "create enqueues a pending validation when VIES fails" do
+  test "create returns validation errors when VIES rejects the input" do
     stub_vies_error(Vies::InvalidInputError, "INVALID_INPUT") do
       post api_v1_vat_validations_path, params: { country_code: "ES", vat_number: "INVALID" }
+    end
+
+    assert_response :unprocessable_entity
+    assert_equal ["INVALID_INPUT"], response.parsed_body["errors"]
+    assert_equal 0, VatValidation.count
+    assert_equal 0, VatValidationWorker.jobs.size
+  end
+
+  test "create enqueues a pending validation when VIES is unavailable" do
+    stub_vies_error(Vies::ServiceUnavailableError, "SERVICE_UNAVAILABLE") do
+      post api_v1_vat_validations_path, params: { country_code: "ES", vat_number: "A12345678" }
     end
 
     assert_response :accepted
     assert_equal "pending", response.parsed_body["status"]
     assert_equal 1, VatValidationWorker.jobs.size
-
-    vat_validation = VatValidation.find(response.parsed_body["id"])
-    assert_equal "pending", vat_validation.status
   end
 
   test "create enqueues a pending validation when VIES times out" do
@@ -354,6 +362,26 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     assert_equal "SERVER_BUSY", error.message
   end
 
+  test "vies client parses SOAP faults from non successful HTTP responses" do
+    response = Struct.new(:body, :code).new(<<~XML, "500")
+      <?xml version="1.0" encoding="UTF-8"?>
+      <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+          <soap:Fault>
+            <faultstring>INVALID_INPUT</faultstring>
+          </soap:Fault>
+        </soap:Body>
+      </soap:Envelope>
+    XML
+
+    stub_http_response(response) do
+      error = assert_raises(Vies::InvalidInputError) do
+        Vies::CheckVatService.call(country_code: "XX", vat_number: "INVALID")
+      end
+      assert_equal "INVALID_INPUT", error.message
+    end
+  end
+
   private
 
   def stub_vies_call(response)
@@ -369,5 +397,23 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
 
   def stub_vies_error(error_class, message, &block)
     stub_vies_call(->(**) { raise error_class, message }, &block)
+  end
+
+  def stub_http_response(response)
+    original_start = Net::HTTP.method(:start)
+    Net::HTTP.define_singleton_method(:start) do |*_args, **_kwargs, &http_block|
+      http = Class.new do
+        attr_accessor :open_timeout, :read_timeout
+
+        define_method(:initialize) { |stubbed_response| @stubbed_response = stubbed_response }
+        define_method(:request) { |_request| @stubbed_response }
+      end.new(response)
+
+      http_block.call(http)
+    end
+
+    yield
+  ensure
+    Net::HTTP.define_singleton_method(:start, original_start) if original_start
   end
 end

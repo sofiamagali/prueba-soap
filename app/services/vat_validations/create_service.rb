@@ -30,7 +30,7 @@ module VatValidations
 
       Result.new(vat_validation: vat_validation, cached: false, status: :created)
     rescue Vies::InvalidInputError => e
-      enqueue_pending_validation(vat_validation, e.message)
+      Result.new(errors: [e.message], status: :unprocessable_entity)
     rescue Vies::ServiceUnavailableError, Vies::MemberStateUnavailableError,
            Vies::TimeoutError, Vies::ServerBusyError => e
       enqueue_pending_validation(vat_validation, e.message)
