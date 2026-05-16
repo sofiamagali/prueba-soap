@@ -25,7 +25,7 @@ module VatValidations
         return Result.new(vat_validation: cached_vat_validation, cached: true, status: :created)
       end
 
-      vat_validation.assign_attributes(vies_response_for(vat_validation).merge(status: "completed"))
+      vat_validation.assign_attributes(vat_validation_attributes_from(vies_response_for(vat_validation)))
       vat_validation.save!
 
       Result.new(vat_validation: vat_validation, cached: false, status: :created)
@@ -60,6 +60,13 @@ module VatValidations
           vat_number: vat_validation.vat_number
         )
       end
+    end
+
+    def vat_validation_attributes_from(vies_response)
+      vies_response.except(:valid).merge(
+        vies_valid: vies_response[:valid],
+        status: "completed"
+      )
     end
 
     def enqueue_pending_validation(vat_validation, _error_message)

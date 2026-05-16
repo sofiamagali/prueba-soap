@@ -36,7 +36,7 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     VatValidation.create!(
       country_code: "ES",
       vat_number: "A12345678",
-      valid: true,
+      vies_valid: true,
       company_name: "Cached SL",
       company_address: "Madrid",
       status: "completed",
@@ -99,7 +99,7 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
 
     vat_validation.reload
     assert_equal "completed", vat_validation.status
-    assert_equal true, vat_validation.valid
+    assert_equal true, vat_validation.vies_valid
     assert_equal "Worker SL", vat_validation.company_name
   end
 
@@ -121,7 +121,7 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     vat_validation = VatValidation.create!(
       country_code: "ES",
       vat_number: "A12345678",
-      valid: true,
+      vies_valid: true,
       company_name: "Example SL",
       company_address: "Madrid",
       status: "completed",
@@ -147,19 +147,19 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     VatValidation.create!(
       country_code: "ES",
       vat_number: "A12345678",
-      valid: true,
+      vies_valid: true,
       queried_at: Time.zone.local(2026, 5, 10)
     )
     VatValidation.create!(
       country_code: "ES",
       vat_number: "B12345678",
-      valid: true,
+      vies_valid: true,
       queried_at: Time.zone.local(2026, 5, 12)
     )
     VatValidation.create!(
       country_code: "FR",
       vat_number: "C12345678",
-      valid: false,
+      vies_valid: false,
       queried_at: Time.zone.local(2026, 5, 12)
     )
 
@@ -201,26 +201,44 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
       VatValidation.create!(
         country_code: "ES",
         vat_number: "A1234567#{index}",
-        valid: true,
+        vies_valid: true,
+        status: "completed",
         queried_at: Time.zone.local(2026, 5, 15)
       )
     end
     VatValidation.create!(
       country_code: "FR",
       vat_number: "B12345678",
-      valid: false,
+      vies_valid: false,
+      status: "completed",
+      queried_at: Time.zone.local(2026, 5, 15)
+    )
+    VatValidation.create!(
+      country_code: "FR",
+      vat_number: "PENDING123",
+      status: "pending",
+      queried_at: Time.zone.local(2026, 5, 15)
+    )
+    VatValidation.create!(
+      country_code: "IT",
+      vat_number: "FAILED123",
+      status: "failed",
       queried_at: Time.zone.local(2026, 5, 15)
     )
 
     get stats_api_v1_vat_validations_path
 
     assert_response :success
-    assert_equal 3, response.parsed_body["total_validations"]
+    assert_equal 5, response.parsed_body["total_validations"]
+    assert_equal 3, response.parsed_body["completed_validations"]
+    assert_equal 1, response.parsed_body["pending_validations"]
+    assert_equal 1, response.parsed_body["failed_validations"]
     assert_equal 66.67, response.parsed_body["valid_percentage"]
     assert_equal 33.33, response.parsed_body["invalid_percentage"]
     assert_equal [
       { "country_code" => "ES", "count" => 2 },
-      { "country_code" => "FR", "count" => 1 }
+      { "country_code" => "FR", "count" => 2 },
+      { "country_code" => "IT", "count" => 1 }
     ], response.parsed_body["top_countries"]
   end
 

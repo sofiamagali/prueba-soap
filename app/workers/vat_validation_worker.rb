@@ -12,7 +12,12 @@ class VatValidationWorker
       vat_number: vat_validation.vat_number
     )
 
-    vat_validation.update!(response.merge(status: "completed"))
+    vat_validation.update!(
+      response.except(:valid).merge(
+        vies_valid: response[:valid],
+        status: "completed"
+      )
+    )
   rescue Vies::Error, Timeout::Error
     vat_validation&.update!(status: "failed")
   end

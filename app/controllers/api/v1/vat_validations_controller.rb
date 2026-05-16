@@ -30,13 +30,18 @@ module Api
 
       def stats
         total_validations = VatValidation.count
-        valid_count = VatValidation.where(vies_valid: true).count
-        invalid_count = VatValidation.where(vies_valid: false).count
+        completed_validations = VatValidation.where(status: "completed")
+        completed_count = completed_validations.count
+        valid_count = completed_validations.where(vies_valid: true).count
+        invalid_count = completed_validations.where(vies_valid: false).count
 
         render json: {
           total_validations: total_validations,
-          valid_percentage: percentage(valid_count, total_validations),
-          invalid_percentage: percentage(invalid_count, total_validations),
+          completed_validations: completed_count,
+          pending_validations: VatValidation.where(status: "pending").count,
+          failed_validations: VatValidation.where(status: "failed").count,
+          valid_percentage: percentage(valid_count, completed_count),
+          invalid_percentage: percentage(invalid_count, completed_count),
           top_countries: top_countries
         }
       end
@@ -64,7 +69,7 @@ module Api
           country_code: vat_validation.country_code,
           vat_number: vat_validation.vat_number,
           status: vat_validation.status,
-          valid: vat_validation.valid,
+          valid: vat_validation.vies_valid,
           company_name: vat_validation.company_name,
           company_address: vat_validation.company_address,
           queried_at: vat_validation.queried_at,
