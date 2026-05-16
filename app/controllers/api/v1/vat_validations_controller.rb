@@ -24,7 +24,7 @@ module Api
           items: result[:items].map { |vat_validation| vat_validation_json(vat_validation) },
           pagination: result[:pagination]
         }
-      rescue VatValidations::ListQuery::InvalidDateError => e
+      rescue VatValidations::ListQuery::InvalidDateError, VatValidations::ListQuery::InvalidBooleanError => e
         render json: { errors: [e.message] }, status: :unprocessable_entity
       end
 

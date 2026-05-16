@@ -143,7 +143,7 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     assert_equal "Vat validation not found", response.parsed_body["error"]
   end
 
-  test "index filters and paginates vat validations" do
+  test "index filters valid true and paginates vat validations" do
     VatValidation.create!(
       country_code: "ES",
       vat_number: "A12345678",
@@ -180,6 +180,35 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     assert_equal 2, response.parsed_body["pagination"]["total_pages"]
     assert_equal "ES", response.parsed_body["items"].first["country_code"]
     assert_equal true, response.parsed_body["items"].first["valid"]
+  end
+
+  test "index filters valid false" do
+    VatValidation.create!(
+      country_code: "ES",
+      vat_number: "A12345678",
+      vies_valid: true,
+      queried_at: Time.zone.local(2026, 5, 12)
+    )
+    VatValidation.create!(
+      country_code: "FR",
+      vat_number: "C12345678",
+      vies_valid: false,
+      queried_at: Time.zone.local(2026, 5, 12)
+    )
+
+    get api_v1_vat_validations_path, params: { valid: "false" }
+
+    assert_response :success
+    assert_equal 1, response.parsed_body["items"].size
+    assert_equal "FR", response.parsed_body["items"].first["country_code"]
+    assert_equal false, response.parsed_body["items"].first["valid"]
+  end
+
+  test "index returns validation error for invalid valid filter" do
+    get api_v1_vat_validations_path, params: { valid: "banana" }
+
+    assert_response :unprocessable_entity
+    assert_equal ["valid must be true, false, 1 or 0"], response.parsed_body["errors"]
   end
 
   test "index returns validation error for invalid date_from" do
