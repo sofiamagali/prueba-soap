@@ -1,116 +1,141 @@
 # prueba-soap
 
-API Rails inicial configurada para correr solo con Docker.
-
-## Requisitos
-
-- Docker
-- Docker Compose
-
-No hace falta instalar Ruby, MySQL ni Redis en la maquina local.
+API Rails para validar VAT numbers contra VIES usando SOAP manual, MySQL, Redis y Sidekiq.
 
 ## Stack
 
 - Ruby 3.2.3
-- Rails 7.2
+- Rails 7.2 en modo API only
 - MySQL 8.0
 - Redis 7
 - Sidekiq 7
-- Rails en modo API only
-
-## Servicios
-
-El archivo `docker-compose.yml` levanta:
-
-- `web`: servidor Rails disponible en `http://localhost:3000`
-- `db`: MySQL interno de Docker
-- `redis`: Redis interno de Docker
-- `sidekiq`: servicio base, sin workers de negocio definidos
-
-La base usa el usuario `root` con password `root`.
+- Docker Compose
 
 ## Levantar el proyecto
 
-Construir las imagenes:
-
 ```bash
 docker compose build
-```
-
-Crear la base de datos:
-
-```bash
-docker compose run web rails db:create
-```
-
-Levantar todos los servicios:
-
-```bash
+docker compose run --rm web bin/rails db:prepare
 docker compose up
 ```
 
-Verificar que Rails levanta:
+La API queda disponible en:
 
-```bash
-docker compose ps
+```text
+http://localhost:3000
 ```
 
-Tambien se puede consultar `http://localhost:3000`. En esta etapa no hay endpoints implementados, por lo que una respuesta `404` de Rails es esperada.
+Servicios principales:
 
-## Alcance actual
+- `web`: Rails API
+- `db`: MySQL
+- `redis`: Redis para Sidekiq
+- `sidekiq`: procesamiento async de validaciones VAT
 
-Este proyecto solo contiene infraestructura inicial:
+## Endpoints
 
-- setup Rails API
-- Docker
-- MySQL
-- Redis
-- Sidekiq base
-- configuracion inicial
-
-Todavia no incluye:
-
-- logica SOAP
-- endpoints de negocio
-- autenticacion
-- Swagger/OpenAPI
-- logica de negocio
-- cache de aplicacion
-- workers Sidekiq
-- rate limiting
-- logica async
-- servicios VIES
-- serializers
-- frontend o dashboard
-
-## Comandos utiles
-
-Ejecutar comandos Rails:
+### Crear validacion
 
 ```bash
-docker compose run web rails --help
+curl -X POST http://localhost:3000/api/v1/vat_validations \
+  -H "Content-Type: application/json" \
+  -d '{"country_code":"IE","vat_number":"6388047V"}'
 ```
 
-Abrir consola Rails:
+Respuestas esperadas:
+
+- `201 Created`: VIES respondio antes de 3 segundos y se guarda `status: completed`.
+- `202 Accepted`: VIES fallo o supero 3 segundos, se guarda `status: pending` y se encola Sidekiq.
+- `422 Unprocessable Content`: parametros locales invalidos.
+
+Si existe una validacion `completed` para el mismo `country_code` + `vat_number` en las ultimas 24 horas, responde desde cache con `cached: true` y no llama a VIES.
+
+### Ver una validacion
 
 ```bash
-docker compose run web rails console
+curl http://localhost:3000/api/v1/vat_validations/1
 ```
 
-Detener los servicios:
+### Listar validaciones
 
 ```bash
-docker compose down
+curl "http://localhost:3000/api/v1/vat_validations?page=1&per_page=10"
 ```
 
-Detener servicios y borrar volumenes de datos:
+Filtros disponibles:
+
+- `country_code`
+- `valid`: acepta solo `true`, `false`, `1`, `0`
+- `date_from`
+- `date_to`
+- `page`
+- `per_page`
+
+Ejemplo:
 
 ```bash
-docker compose down -v
+curl "http://localhost:3000/api/v1/vat_validations?country_code=IE&valid=true&page=1&per_page=10"
 ```
 
-## Notas
+### Estadisticas
 
-- MySQL y Redis no exponen puertos al host; solo se usan desde la red interna de Docker.
-- El unico puerto expuesto para desarrollo es `3000`.
-- Todavia no hay logica de negocio implementada.
+```bash
+curl http://localhost:3000/api/v1/vat_validations/stats
+```
+
+Devuelve:
+
+- `total_validations`
+- `completed_validations`
+- `pending_validations`
+- `failed_validations`
+- `valid_percentage`
+- `invalid_percentage`
+- `top_countries`
+
+Los porcentajes de validas/invalidas se calculan solo sobre validaciones `completed`.
+
+## Async con Sidekiq
+
+Cuando VIES falla o tarda mas de 3 segundos:
+
+1. La API crea una validacion `pending`.
+2. Responde `202 Accepted`.
+3. Encola `VatValidationWorker`.
+4. Sidekiq vuelve a llamar a VIES.
+5. El registro pasa a `completed` si VIES responde bien o a `failed` si vuelve a fallar.
+
+Ver logs:
+
+```bash
+docker compose logs -f sidekiq
+```
+
+## Tests
+
+```bash
+docker compose run --rm web bin/rails test
+```
+
+Verificar autoloading:
+
+```bash
+docker compose run --rm web bin/rails zeitwerk:check
+```
+
+## Bruno
+
+La coleccion Bruno esta en:
+
+```text
+bruno/vat-validations
+```
+
+Incluye requests para create, cache, errores, show, index, filtros, stats y caso async/pending por error VIES.
+
+## Notas tecnicas
+
+- La integracion SOAP esta implementada manualmente con `Net::HTTP` y `Nokogiri`; no se usan gems SOAP.
+- La cache de 24 horas se resuelve consultando registros `completed` persistidos.
+- Sidekiq usa `retry: false` para evitar reintentos infinitos en esta prueba.
+- MySQL y Redis solo se exponen dentro de la red Docker.

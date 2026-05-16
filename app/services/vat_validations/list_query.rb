@@ -5,6 +5,7 @@ module VatValidations
 
     DEFAULT_PAGE = 1
     DEFAULT_PER_PAGE = 25
+    MAX_PER_PAGE = 100
 
     attr_reader :page, :per_page
 
@@ -65,7 +66,7 @@ module VatValidations
 
     def positive_integer_param(value, default)
       integer = value.to_i
-      integer.positive? ? integer : default
+      integer.positive? ? [integer, MAX_PER_PAGE].min : default
     end
   end
 end

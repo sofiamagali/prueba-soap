@@ -6,6 +6,7 @@ class VatValidationWorker
   def perform(vat_validation_id)
     vat_validation = VatValidation.find_by(id: vat_validation_id)
     return unless vat_validation
+    return unless vat_validation.status == "pending"
 
     response = Vies::CheckVatService.call(
       country_code: vat_validation.country_code,

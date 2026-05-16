@@ -81,8 +81,8 @@ module VatValidations
       VatValidation
         .where(country_code: vat_validation.country_code, vat_number: vat_validation.vat_number)
         .where(status: "completed")
-        .where("queried_at >= :since OR created_at >= :since", since: 24.hours.ago)
-        .order(queried_at: :desc, created_at: :desc)
+        .where(queried_at: 24.hours.ago..)
+        .order(queried_at: :desc)
         .first
     end
   end

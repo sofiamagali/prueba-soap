@@ -57,6 +57,33 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     assert_equal 0, VatValidationWorker.jobs.size
   end
 
+  test "create does not use cache when completed validation has no queried_at" do
+    VatValidation.create!(
+      country_code: "ES",
+      vat_number: "A12345678",
+      vies_valid: true,
+      company_name: "Stale SL",
+      company_address: "Madrid",
+      status: "completed",
+      queried_at: nil
+    )
+    vies_response = {
+      valid: false,
+      company_name: "Fresh SL",
+      company_address: "Barcelona",
+      queried_at: Time.current
+    }
+
+    stub_vies_call(vies_response) do
+      post api_v1_vat_validations_path, params: { country_code: "es", vat_number: "A12345678" }
+    end
+
+    assert_response :created
+    assert_equal false, response.parsed_body["cached"]
+    assert_equal "Fresh SL", response.parsed_body["company_name"]
+    assert_equal 2, VatValidation.where(country_code: "ES", vat_number: "A12345678").count
+  end
+
   test "create enqueues a pending validation when VIES fails" do
     stub_vies_error(Vies::InvalidInputError, "INVALID_INPUT") do
       post api_v1_vat_validations_path, params: { country_code: "ES", vat_number: "INVALID" }
@@ -115,6 +142,26 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     end
 
     assert_equal "failed", vat_validation.reload.status
+  end
+
+  test "worker does not reprocess completed vat validations" do
+    vat_validation = VatValidation.create!(
+      country_code: "ES",
+      vat_number: "A12345678",
+      vies_valid: true,
+      company_name: "Original SL",
+      status: "completed",
+      queried_at: Time.zone.local(2026, 5, 16)
+    )
+
+    stub_vies_call(valid: false, company_name: "Overwritten SL", company_address: "Barcelona", queried_at: Time.current) do
+      VatValidationWorker.new.perform(vat_validation.id)
+    end
+
+    vat_validation.reload
+    assert_equal "completed", vat_validation.status
+    assert_equal true, vat_validation.vies_valid
+    assert_equal "Original SL", vat_validation.company_name
   end
 
   test "show returns an existing vat validation" do
@@ -180,6 +227,24 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     assert_equal 2, response.parsed_body["pagination"]["total_pages"]
     assert_equal "ES", response.parsed_body["items"].first["country_code"]
     assert_equal true, response.parsed_body["items"].first["valid"]
+  end
+
+  test "index caps per_page to avoid unbounded responses" do
+    101.times do |index|
+      VatValidation.create!(
+        country_code: "ES",
+        vat_number: "A1234567#{index}",
+        vies_valid: true,
+        queried_at: Time.zone.local(2026, 5, 12)
+      )
+    end
+
+    get api_v1_vat_validations_path, params: { per_page: 1_000_000 }
+
+    assert_response :success
+    assert_equal 100, response.parsed_body["items"].size
+    assert_equal 100, response.parsed_body["pagination"]["per_page"]
+    assert_equal 2, response.parsed_body["pagination"]["total_pages"]
   end
 
   test "index filters valid false" do
@@ -269,6 +334,24 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
       { "country_code" => "FR", "count" => 2 },
       { "country_code" => "IT", "count" => 1 }
     ], response.parsed_body["top_countries"]
+  end
+
+  test "vies parser maps known SOAP faults" do
+    body = <<~XML
+      <?xml version="1.0" encoding="UTF-8"?>
+      <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+          <soap:Fault>
+            <faultstring>SERVER_BUSY</faultstring>
+          </soap:Fault>
+        </soap:Body>
+      </soap:Envelope>
+    XML
+
+    error = assert_raises(Vies::ServerBusyError) do
+      Vies::CheckVatService.send(:parse_response, body)
+    end
+    assert_equal "SERVER_BUSY", error.message
   end
 
   private

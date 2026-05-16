@@ -69,7 +69,7 @@ module Vies
     private_class_method :soap_body
 
     def self.parse_response(body)
-      document = Nokogiri::XML(body) { |config| config.strict.noblanks }
+      document = Nokogiri::XML(body) { |config| config.strict.noblanks.nonet }
       raise_fault(document) if fault?(document)
       valid = text_at(document, "valid")
       raise UnexpectedResponseError, "Unexpected VIES response" if valid.nil?
