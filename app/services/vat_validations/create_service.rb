@@ -1,4 +1,5 @@
 require "timeout"
+require_relative "../vies/circuit_breaker"
 require_relative "../vies/check_vat_service"
 
 module VatValidations
@@ -56,10 +57,12 @@ module VatValidations
     def vies_response_for(vat_validation)
       # Si VIES tarda, prefiero sacar la consulta del request y dejarla para Sidekiq.
       Timeout.timeout(SYNC_TIMEOUT_SECONDS) do
-        Vies::CheckVatService.call(
-          country_code: vat_validation.country_code,
-          vat_number: vat_validation.vat_number
-        )
+        Vies::CircuitBreaker.call do
+          Vies::CheckVatService.call(
+            country_code: vat_validation.country_code,
+            vat_number: vat_validation.vat_number
+          )
+        end
       end
     end
 

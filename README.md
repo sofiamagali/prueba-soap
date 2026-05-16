@@ -107,6 +107,15 @@ Cuando VIES tiene un error transitorio o tarda mas de 3 segundos:
 
 El fault `INVALID_INPUT` de VIES se considera un error de validacion del request y responde `422`; no se persiste ni se encola.
 
+## Circuit breaker
+
+La integracion con VIES incluye un circuit breaker simple para evitar seguir llamando a un servicio externo cuando esta degradado.
+
+- Se abre despues de 5 errores transitorios consecutivos (`SERVICE_UNAVAILABLE`, `MS_UNAVAILABLE`, `TIMEOUT`, `SERVER_BUSY` o timeouts de red).
+- Permanece abierto durante 5 minutos.
+- Mientras esta abierto, las nuevas validaciones se guardan como `pending`, responden `202 Accepted` y se procesan luego con Sidekiq.
+- `INVALID_INPUT` no cuenta como fallo del circuito porque representa un error del request, no una caida de VIES.
+
 Ver logs:
 
 ```bash
@@ -139,5 +148,6 @@ Incluye requests para create, cache, errores, show, index, filtros, stats y `INV
 
 - La integracion SOAP esta implementada manualmente con `Net::HTTP` y `Nokogiri`; no se usan gems SOAP.
 - La cache de 24 horas se resuelve consultando registros `completed` persistidos.
+- El circuit breaker usa `Rails.cache` para mantener la implementacion liviana y suficiente para el alcance de la prueba.
 - Sidekiq usa `retry: false` para evitar reintentos infinitos en esta prueba.
 - MySQL y Redis solo se exponen dentro de la red Docker.

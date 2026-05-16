@@ -152,6 +152,21 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     assert_equal "failed", vat_validation.reload.status
   end
 
+  test "worker keeps pending validation and schedules retry when circuit breaker is open" do
+    vat_validation = VatValidation.create!(
+      country_code: "ES",
+      vat_number: "A12345678",
+      status: "pending"
+    )
+    open_vies_circuit_breaker
+
+    VatValidationWorker.new.perform(vat_validation.id)
+
+    assert_equal "pending", vat_validation.reload.status
+    assert_equal 1, VatValidationWorker.jobs.size
+    assert VatValidationWorker.jobs.first["at"].present?
+  end
+
   test "worker does not reprocess completed vat validations" do
     vat_validation = VatValidation.create!(
       country_code: "ES",
@@ -382,7 +397,50 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "circuit breaker opens after repeated transient VIES failures" do
+    Vies::CircuitBreaker::FAILURE_THRESHOLD.times do
+      assert_raises(Vies::TimeoutError) do
+        Vies::CircuitBreaker.call { raise Vies::TimeoutError, "TIMEOUT" }
+      end
+    end
+
+    assert Vies::CircuitBreaker.open?
+    assert_raises(Vies::CircuitOpenError) do
+      Vies::CircuitBreaker.call { flunk "VIES should not be called while circuit is open" }
+    end
+  end
+
+  test "circuit breaker does not open on invalid VIES input" do
+    Vies::CircuitBreaker::FAILURE_THRESHOLD.times do
+      assert_raises(Vies::InvalidInputError) do
+        Vies::CircuitBreaker.call { raise Vies::InvalidInputError, "INVALID_INPUT" }
+      end
+    end
+
+    assert_not Vies::CircuitBreaker.open?
+  end
+
+  test "create returns pending without calling VIES when circuit breaker is open" do
+    calls = 0
+    open_vies_circuit_breaker
+
+    stub_vies_call(->(**) { calls += 1 }) do
+      post api_v1_vat_validations_path, params: { country_code: "ES", vat_number: "A12345678" }
+    end
+
+    assert_response :accepted
+    assert_equal "pending", response.parsed_body["status"]
+    assert_equal 0, calls
+    assert_equal 1, VatValidationWorker.jobs.size
+  end
+
   private
+
+  def open_vies_circuit_breaker
+    Vies::CircuitBreaker::FAILURE_THRESHOLD.times do
+      Vies::CircuitBreaker.record_failure
+    end
+  end
 
   def stub_vies_call(response)
     original_call = Vies::CheckVatService.method(:call)

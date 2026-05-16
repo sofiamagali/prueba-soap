@@ -14,6 +14,8 @@ class ActiveSupport::TestCase
 
   setup do
     Sidekiq::Worker.clear_all
+    Rails.cache.clear
+    Vies::CircuitBreaker.reset! if defined?(Vies::CircuitBreaker)
   end
 
   # Add more helper methods to be used by all tests here...

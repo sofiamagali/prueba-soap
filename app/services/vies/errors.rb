@@ -7,6 +7,7 @@ module Vies
     class TimeoutError < Error; end
     class ServerBusyError < Error; end
     class UnexpectedResponseError < Error; end
+    class CircuitOpenError < ServiceUnavailableError; end
 
     FAULT_ERRORS = {
       "INVALID_INPUT" => InvalidInputError,
@@ -28,4 +29,5 @@ module Vies
   TimeoutError = Errors::TimeoutError
   ServerBusyError = Errors::ServerBusyError
   UnexpectedResponseError = Errors::UnexpectedResponseError
+  CircuitOpenError = Errors::CircuitOpenError
 end
