@@ -3,8 +3,12 @@ class VatValidationWorker
 
   CIRCUIT_OPEN_RETRY_IN = Vies::CircuitBreaker::OPEN_TIMEOUT
 
-  # VIES ya puede fallar de forma transitoria; para la prueba guardo el fallo en vez de reintentar sin limite.
-  sidekiq_options retry: false
+  # VIES puede fallar de forma transitoria; reintento pocas veces antes de cerrar el intento como fallido.
+  sidekiq_options retry: 3
+
+  sidekiq_retries_exhausted do |job, _error|
+    VatValidation.find_by(id: job["args"].first)&.update!(status: "failed")
+  end
 
   def perform(vat_validation_id)
     vat_validation = VatValidation.find_by(id: vat_validation_id)
@@ -29,6 +33,6 @@ class VatValidationWorker
     # El circuito abierto no significa que la validacion sea fallida; solo pospone el intento.
     VatValidationWorker.perform_in(CIRCUIT_OPEN_RETRY_IN, vat_validation.id) if vat_validation
   rescue Vies::Error, Timeout::Error
-    vat_validation&.update!(status: "failed")
+    raise
   end
 end

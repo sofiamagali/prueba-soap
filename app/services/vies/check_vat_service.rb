@@ -7,6 +7,8 @@ module Vies
   class CheckVatService
     ENDPOINT = URI("https://ec.europa.eu/taxation_customs/vies/services/checkVatService").freeze
     TIMEOUT_SECONDS = 10
+    MAX_REDIRECTS = 3
+    REDIRECT_CODES = %w[301 302 307 308].freeze
     # Evita tratar como fallos transitorios los paises que VIES nunca va a aceptar.
     # Esos casos deben responder 422 sin crear pending ni encolar Sidekiq.
     SUPPORTED_COUNTRY_CODES = %w[
@@ -15,11 +17,11 @@ module Vies
 
     def self.call(country_code:, vat_number:)
       # Net::HTTP alcanza para este caso y evita sumar una dependencia SOAP solo para un endpoint.
-      response = Net::HTTP.start(ENDPOINT.host, ENDPOINT.port, use_ssl: true) do |http|
-        http.open_timeout = TIMEOUT_SECONDS
-        http.read_timeout = TIMEOUT_SECONDS
-        http.request(request(country_code:, vat_number:))
-      end
+      response = perform_request(
+        ENDPOINT,
+        country_code: country_code,
+        vat_number: vat_number
+      )
 
       # Algunos faults vienen con HTTP 500, pero igual conviene parsearlos para no perder el motivo real.
       if fault_body?(response.body)
@@ -35,14 +37,58 @@ module Vies
       raise ServiceUnavailableError, "VIES request failed: #{e.message}"
     end
 
-    def self.request(country_code:, vat_number:)
-      Net::HTTP::Post.new(ENDPOINT).tap do |request|
+    def self.perform_request(uri, country_code:, vat_number:, redirects_remaining: MAX_REDIRECTS)
+      response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") do |http|
+        http.open_timeout = TIMEOUT_SECONDS
+        http.read_timeout = TIMEOUT_SECONDS
+        http.request(request(uri, country_code:, vat_number:))
+      end
+
+      return response unless redirect_response?(response)
+      raise ServiceUnavailableError, "VIES redirect limit exceeded" if redirects_remaining.zero?
+
+      perform_request(
+        redirect_uri(uri, response),
+        country_code: country_code,
+        vat_number: vat_number,
+        redirects_remaining: redirects_remaining - 1
+      )
+    end
+    private_class_method :perform_request
+
+    def self.request(uri, country_code:, vat_number:)
+      Net::HTTP::Post.new(uri).tap do |request|
         request["Content-Type"] = "text/xml; charset=utf-8"
         request["SOAPAction"] = ""
         request.body = soap_body(country_code:, vat_number:)
       end
     end
     private_class_method :request
+
+    def self.redirect_response?(response)
+      REDIRECT_CODES.include?(response.code)
+    end
+    private_class_method :redirect_response?
+
+    def self.redirect_uri(current_uri, response)
+      location = response["location"].to_s
+      raise ServiceUnavailableError, "VIES redirect response missing location" if location.blank?
+
+      uri = URI.join(current_uri, location)
+      unless safe_redirect_uri?(uri)
+        raise ServiceUnavailableError, "VIES redirected to an unsupported location"
+      end
+
+      uri
+    rescue URI::InvalidURIError
+      raise ServiceUnavailableError, "VIES returned an invalid redirect location"
+    end
+    private_class_method :redirect_uri
+
+    def self.safe_redirect_uri?(uri)
+      uri.is_a?(URI::HTTPS) && (uri.host == ENDPOINT.host || uri.host.end_with?(".#{ENDPOINT.host}"))
+    end
+    private_class_method :safe_redirect_uri?
 
     def self.soap_body(country_code:, vat_number:)
       country_code = CGI.escapeHTML(country_code.to_s.strip.upcase)

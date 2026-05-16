@@ -151,7 +151,7 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     assert_equal "Worker SL", vat_validation.company_name
   end
 
-  test "worker marks a pending vat validation as failed when VIES fails" do
+  test "worker keeps a pending vat validation pending when VIES fails so Sidekiq can retry" do
     vat_validation = VatValidation.create!(
       country_code: "ES",
       vat_number: "A12345678",
@@ -159,10 +159,28 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     )
 
     stub_vies_error(Vies::ServiceUnavailableError, "SERVICE_UNAVAILABLE") do
-      VatValidationWorker.new.perform(vat_validation.id)
+      assert_raises(Vies::ServiceUnavailableError) do
+        VatValidationWorker.new.perform(vat_validation.id)
+      end
     end
 
+    assert_equal "pending", vat_validation.reload.status
+  end
+
+  test "worker marks a pending vat validation as failed when Sidekiq retries are exhausted" do
+    vat_validation = VatValidation.create!(
+      country_code: "ES",
+      vat_number: "A12345678",
+      status: "pending"
+    )
+
+    VatValidationWorker.sidekiq_retries_exhausted_block.call({ "args" => [vat_validation.id] }, StandardError.new("failed"))
+
     assert_equal "failed", vat_validation.reload.status
+  end
+
+  test "worker retries are bounded" do
+    assert_equal 3, VatValidationWorker.get_sidekiq_options["retry"]
   end
 
   test "worker keeps pending validation and schedules retry when circuit breaker is open" do
@@ -391,7 +409,7 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
   end
 
   test "vies client parses SOAP faults from non successful HTTP responses" do
-    response = Struct.new(:body, :code).new(<<~XML, "500")
+    response = http_response("500", <<~XML)
       <?xml version="1.0" encoding="UTF-8"?>
       <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
         <soap:Body>
@@ -407,6 +425,50 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
         Vies::CheckVatService.call(country_code: "XX", vat_number: "INVALID")
       end
       assert_equal "INVALID_INPUT", error.message
+    end
+  end
+
+  test "vies client follows a safe HTTP redirect and parses the redirected SOAP response" do
+    redirect = http_response(
+      "307",
+      "",
+      "location" => "https://sorry.ec.europa.eu/checkVatService"
+    )
+    success = http_response("200", <<~XML)
+      <?xml version="1.0" encoding="UTF-8"?>
+      <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+          <checkVatResponse>
+            <valid>true</valid>
+            <name>Redirected SL</name>
+            <address>Madrid</address>
+          </checkVatResponse>
+        </soap:Body>
+      </soap:Envelope>
+    XML
+
+    stub_http_response(redirect, success) do
+      result = Vies::CheckVatService.call(country_code: "ES", vat_number: "A12345678")
+
+      assert_equal true, result[:valid]
+      assert_equal "Redirected SL", result[:company_name]
+      assert_equal "Madrid", result[:company_address]
+    end
+  end
+
+  test "vies client rejects unsafe HTTP redirects" do
+    redirect = http_response(
+      "302",
+      "",
+      "location" => "http://169.254.169.254/latest/meta-data"
+    )
+
+    stub_http_response(redirect) do
+      error = assert_raises(Vies::ServiceUnavailableError) do
+        Vies::CheckVatService.call(country_code: "ES", vat_number: "A12345678")
+      end
+
+      assert_equal "VIES redirected to an unsupported location", error.message
     end
   end
 
@@ -470,15 +532,28 @@ class VatValidationsTest < ActionDispatch::IntegrationTest
     stub_vies_call(->(**) { raise error_class, message }, &block)
   end
 
-  def stub_http_response(response)
+  def http_response(code, body, headers = {})
+    Struct.new(:code, :body, :headers) do
+      def [](key)
+        headers[key.to_s.downcase]
+      end
+
+      def is_a?(klass)
+        klass == Net::HTTPSuccess ? code.start_with?("2") : super
+      end
+    end.new(code, body, headers.transform_keys { |key| key.to_s.downcase })
+  end
+
+  def stub_http_response(*responses)
     original_start = Net::HTTP.method(:start)
+    responses = responses.dup
     Net::HTTP.define_singleton_method(:start) do |*_args, **_kwargs, &http_block|
       http = Class.new do
         attr_accessor :open_timeout, :read_timeout
 
-        define_method(:initialize) { |stubbed_response| @stubbed_response = stubbed_response }
-        define_method(:request) { |_request| @stubbed_response }
-      end.new(response)
+        define_method(:initialize) { |stubbed_responses| @stubbed_responses = stubbed_responses }
+        define_method(:request) { |_request| @stubbed_responses.shift }
+      end.new(responses)
 
       http_block.call(http)
     end

@@ -50,6 +50,8 @@ Respuestas esperadas:
 
 Si existe una validacion `completed` para el mismo `country_code` + `vat_number` en las ultimas 24 horas, responde desde cache con `cached: true` y no llama a VIES.
 
+VIES es un servicio publico externo y puede responder temporalmente con errores, timeouts o redirects HTTP. La API sigue redirects seguros de la Comision Europea con un limite de saltos; si la respuesta final no es un SOAP valido o el servicio sigue degradado, la validacion pasa al flujo async.
+
 ### Ver una validacion
 
 ```bash
@@ -102,10 +104,12 @@ Cuando VIES tiene un error transitorio o tarda mas de 3 segundos:
 1. La API crea una validacion `pending`.
 2. Responde `202 Accepted`.
 3. Encola `VatValidationWorker`.
-4. Sidekiq vuelve a llamar a VIES.
-5. El registro pasa a `completed` si VIES responde bien o a `failed` si vuelve a fallar.
+4. Sidekiq vuelve a llamar a VIES con retries acotados.
+5. El registro pasa a `completed` si VIES responde bien o a `failed` cuando se agotan los reintentos.
 
 El fault `INVALID_INPUT` de VIES se considera un error de validacion del request y responde `422`; no se persiste ni se encola.
+
+Mientras Sidekiq esta reintentando, el registro se mantiene en `pending`. Esto evita marcar como fallido un VAT solo porque VIES tuvo una degradacion temporal.
 
 ## Circuit breaker
 
@@ -147,7 +151,8 @@ Incluye requests para create, cache, errores, show, index, filtros, stats y `INV
 ## Notas tecnicas
 
 - La integracion SOAP esta implementada manualmente con `Net::HTTP` y `Nokogiri`; no se usan gems SOAP.
+- Los redirects HTTP `301`, `302`, `307` y `308` se siguen solo si apuntan a HTTPS y al host original de VIES o subdominios de `ec.europa.eu`; hay un limite de 3 redirects para evitar loops.
 - La cache de 24 horas se resuelve consultando registros `completed` persistidos.
 - El circuit breaker usa `Rails.cache` para mantener la implementacion liviana y suficiente para el alcance de la prueba.
-- Sidekiq usa `retry: false` para evitar reintentos infinitos en esta prueba.
+- Sidekiq usa retries acotados para absorber fallos temporales sin reintentos infinitos.
 - MySQL y Redis solo se exponen dentro de la red Docker.
