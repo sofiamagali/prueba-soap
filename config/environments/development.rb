@@ -14,6 +14,9 @@ Rails.application.configure do
   # Enable server timing
   config.server_timing = true
 
+  config.middleware.use ActionDispatch::Cookies
+  config.middleware.use ActionDispatch::Session::CookieStore, key: "_prueba_soap_session"
+
   config.action_controller.perform_caching = false
 
   # Print deprecation notices to the Rails logger.
